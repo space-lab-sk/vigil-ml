@@ -1,6 +1,7 @@
 from hapiclient import hapi
+import numpy as np
 
-def get_hapi_data(server: str, dataset: str, parameters: str, start: str, stop: str):
+def get_hapi_data(server: str, dataset: str, parameters: str, start: str, stop: str) ->np.ndarray:
 
     opts = {'logging': False} # set True for some more info about transfer
     start, stop = convert_datetime_format(start, stop)
@@ -11,7 +12,7 @@ def get_hapi_data(server: str, dataset: str, parameters: str, start: str, stop: 
     return data
 
 
-def convert_datetime_format(start: str, stop: str):
+def convert_datetime_format(start: str, stop: str) -> tuple[str, str]:
     """
     Converts a datetime string in the format "YYYY-MM-DD HH:MM:SS" to the format "YYYY-MM-DDTHH:MM:SS", 
     suitable for HAPI

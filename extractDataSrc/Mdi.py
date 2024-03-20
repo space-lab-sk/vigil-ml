@@ -11,6 +11,7 @@ class Mdi:
 
     def extract_data(self, product: str):
         
+        # ------------extract data-----------------
         server = 'https://api.helioviewer.org/hapi/Helioviewer/hapi'
         # dataset is determined bellow
         dataset = ""
@@ -24,11 +25,12 @@ class Mdi:
         else:
             raise ValueError("product should be \"mag\" for magnetogram or \"con\" for continuum")
         
-        data = get_hapi_data(server, dataset, parameters, self.start, self.stop)
-        images_count = len(data)
+        hapi_data = get_hapi_data(server, dataset, parameters, self.start, self.stop)
+        images_count = len(hapi_data)
         target_dir = f"data_processed/mdi/{product}"
 
-        for count, item in enumerate(data):
+        # ------------load data (save)-----------------
+        for count, item in enumerate(hapi_data):
 
             print(f"{count} / {images_count}")
             filename = self._extract_filename(item[1])
