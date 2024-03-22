@@ -1,2 +1,4 @@
 .venv
 data_processed
+data_csv
+data_fits

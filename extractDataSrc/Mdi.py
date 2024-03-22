@@ -2,6 +2,8 @@ from extractDataSrc.Hapi import get_hapi_data
 import os
 import requests
 from IPython.display import clear_output
+import cv2
+import glob
 
 class Mdi:
     def __init__(self, start_datetime: str, stop_datetime: str) -> None:
@@ -9,7 +11,7 @@ class Mdi:
         self.stop = stop_datetime
 
 
-    def extract_data(self, product: str):
+    def extract_data(self, product: str, quality_check=True):
         
         # ------------extract data-----------------
         server = 'https://api.helioviewer.org/hapi/Helioviewer/hapi'
@@ -38,6 +40,18 @@ class Mdi:
             self._download_file(item[1], filename, target_dir)
             clear_output(wait=True)
 
+        # ------------check for faulty images (optional)------------
+        if quality_check:
+            src_dir = target_dir + "/*.png"
+            images_paths = glob.glob(src_dir)
+
+            for count, image_path in enumerate(images_paths):
+                
+                print(f"checking quality... {count} / {images_count}")
+                if self._is_mdi_image_bad(image_path):
+                    os.remove(image_path)
+                
+                clear_output(wait=True)
 
 
     def _download_file(self, url: str, filename: str, target_dir: str):
@@ -89,4 +103,34 @@ class Mdi:
 
         # Reformat and return the filename
         return f"{date}_{time}_{instrument}{channel}_{resolution}.png"
+    
+
+    def _is_mdi_image_bad(self, img_path):
+        """
+        Checks if an image is potentially bad based on asymmetry using central moments.
+
+        Args:
+            image: image of the solar disc.
+
+        Returns:
+            True if the image is likely bad, False otherwise.
+        """
+        image = cv2.imread(img_path)
+
+        if len(image.shape) == 3:
+            gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray_image = image
+
+        moments = cv2.moments(gray_image)
+
+        mu20 = moments["mu20"]
+        mu02 = moments["mu02"]
+
+        asymmetry_threshold = 0.25
+
+        if abs(mu20 - mu02) > asymmetry_threshold * max(mu20, mu02):
+            return True
+        else:
+            return False
 

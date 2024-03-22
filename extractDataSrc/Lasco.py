@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 from hvpy import createScreenshot, DataSource, create_layers
+import time
 
 
 class Lasco:
@@ -51,24 +52,34 @@ class Lasco:
                 print("skipping images...")
                 continue
 
-            time = str(row['Time'])
+            time_str = str(row['Time'])
 
-            original_datetime = datetime.strptime(time, "%Y-%m-%d %H:%M:%S")
+            original_datetime = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
 
-            filename = self._extract_filename(time, detector)
+            filename = self._extract_filename(time_str, detector)
             save_path = target_dir+filename
 
-            screenshot_location = createScreenshot(
-                date=datetime(original_datetime.year, original_datetime.month, original_datetime.day, original_datetime.hour, original_datetime.minute),
-                layers=create_layers([(hvpy_layer, 100)]),
-                imageScale=scale,
-                x0=0,
-                y0=0,
-                width=1024,
-                height=1024,
-                filename=save_path,
-                overwrite=True
-            )
+            # TODO: looks robust, make method out of this
+            for attempt in range(1, 4):
+                try:
+                    screenshot_location = createScreenshot(
+                        date=datetime(original_datetime.year, original_datetime.month, original_datetime.day, original_datetime.hour, original_datetime.minute),
+                        layers=create_layers([(hvpy_layer, 100)]),
+                        imageScale=scale,
+                        x0=0,
+                        y0=0,
+                        width=1024,
+                        height=1024,
+                        filename=save_path,
+                        overwrite=True
+                    )
+                except Exception as e:
+                    print(f"Screenshot creation on index {index} failed: {e}")
+                    print(f"attempting: {attempt} / 4")
+                    time.sleep(60)
+                else:
+                    print("success")
+                    break
 
             clear_output(wait=True)
 
