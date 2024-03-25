@@ -4,6 +4,9 @@ import requests
 from IPython.display import clear_output
 import cv2
 import glob
+from hvpy import createScreenshot, DataSource, create_layers
+from datetime import datetime
+import time
 
 class Mdi:
     def __init__(self, start_datetime: str, stop_datetime: str) -> None:
@@ -18,18 +21,21 @@ class Mdi:
         # dataset is determined bellow
         dataset = ""
         parameters = 'url'
+        hvpy_layer: DataSource = None
         
 
         if product == "mag":
             dataset = "MDI_MAG"
+            hvpy_layer = DataSource.MDI_MAG
         elif product == "con":
             dataset = "MDI_INT"
+            hvpy_layer = DataSource.MDI_INT
         else:
             raise ValueError("product should be \"mag\" for magnetogram or \"con\" for continuum")
         
         hapi_data = get_hapi_data(server, dataset, parameters, self.start, self.stop)
         images_count = len(hapi_data)
-        target_dir = f"data_processed/mdi/{product}"
+        target_dir = f"data_processed/mdi/{product}/"
 
         # ------------load data (save)-----------------
         for count, item in enumerate(hapi_data):
@@ -37,12 +43,12 @@ class Mdi:
             print(f"{count} / {images_count}")
             filename = self._extract_filename(item[1])
 
-            self._download_file(item[1], filename, target_dir)
+            self._download_file_from_hvpy(filename, target_dir, hvpy_layer, count)
             clear_output(wait=True)
 
         # ------------check for faulty images (optional)------------
         if quality_check:
-            src_dir = target_dir + "/*.png"
+            src_dir = target_dir + "*.png"
             images_paths = glob.glob(src_dir)
 
             for count, image_path in enumerate(images_paths):
@@ -54,7 +60,53 @@ class Mdi:
                 clear_output(wait=True)
 
 
-    def _download_file(self, url: str, filename: str, target_dir: str):
+    def _download_file_from_hvpy(self, filename: str, target_dir: str, hvpy_layer: DataSource, count: int):
+
+        datetime_object = self._string_to_datetime(filename)
+        for attempt in range(1, 4):
+            try:
+                screenshot_location = createScreenshot(
+                    date=datetime_object,
+                    layers=create_layers([(hvpy_layer, 100)]),
+                    imageScale=2.57,
+                    x0=0,
+                    y0=0,
+                    width=1024,
+                    height=1024,
+                    filename=target_dir + filename,
+                    overwrite=True
+                )
+            except Exception as e:
+                print(f"Screenshot creation on index {count} failed: {e}")
+                print(f"attempting: {attempt} / 4")
+                time.sleep(60)
+            else:
+                print("success")
+                break
+
+
+    def _string_to_datetime(self, date_string):
+        """Converts a string in the format YYYYMMDD_HHMM to a datetime object.
+
+        Args:
+            date_string: A string representation of a date and time in the format YYYYMMDD_HHMM.
+
+        Returns:
+            A datetime object representing the date and time in the input string.
+        """
+
+        date_string = date_string[0:13]
+
+        year = int(date_string[:4])
+        month = int(date_string[4:6])
+        day = int(date_string[6:8])
+        hour = int(date_string[9:11])
+        minute = int(date_string[11:])
+        
+        return datetime(year, month, day, hour, minute)
+
+
+    def _deprecated_download_file(self, url: str, filename: str, target_dir: str):
         """Downloads a file from the specified URL and saves it to the target directory.
 
         Args:
@@ -102,7 +154,7 @@ class Mdi:
         channel = parts[12][:3]
 
         # Reformat and return the filename
-        return f"{date}_{time}_{instrument}{channel}_{resolution}.png"
+        return f"{date}_{time}_{instrument}{channel}_{resolution}"
     
 
     def _is_mdi_image_bad(self, img_path):
