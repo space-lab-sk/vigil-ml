@@ -84,7 +84,10 @@ class Lasco:
             clear_output(wait=True)
 
 
-    def _transform_data(self, data):
+    def _transform_data(self, data: np.ndarray) -> pd.DataFrame:
+        """This function creates dataframe from filtered numpy data downloaded from HAPI.
+        """
+
         filtered_data = np.array(data, dtype=[('Time', 'S22'), ('url', '<U255')])
         df = pd.DataFrame(data=filtered_data)
         df['Time'] = df['Time'].str.decode('utf-8')
@@ -93,7 +96,7 @@ class Lasco:
         return df
     
 
-    def _extract_filename(self, original_file_link: str, detector: str):
+    def _extract_filename(self, original_file_link: str, detector: str) -> str:
         """changes Helioviewer .fits name convention to VSO naming convention. 
         Changin to VSO naming convention will provide ability to synergy with data from Adam's Bachelor Thesis if needed
 

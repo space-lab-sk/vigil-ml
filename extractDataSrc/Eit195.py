@@ -41,6 +41,14 @@ class Eit195:
 
         
     def _download_fits_files_from_csv(self, df: pd.DataFrame):
+        """This code snippet iterates through a DataFrame assumed to contain a 'links' 
+        column with download URLs for FITS files.  For each row, it extracts the link, 
+        retrieves the filename from the URL, and calls a separate function (self._download_fits_file)
+          to handle the download and file saving process.
+
+        Args:
+            df (pd.DataFrame): dataframe of links to fits files
+        """
         files_count = len(df)
 
         for index, row in df.iterrows():
@@ -53,7 +61,18 @@ class Eit195:
             clear_output(wait=True)
 
 
-    def _download_fits_file(self, url, filename):
+    def _download_fits_file(self, url: str, filename: str):
+        """This function downloads a FITS file from a specified URL and saves it with a given filename.
+        It constructs the destination path within a designated folder (data_fits/eit).
+        The function uses the requests library to download the file in chunks.
+        It iterates through content chunks, keeps track of downloaded data size,
+        and writes each chunk to the file.
+
+        Args:
+            url (str): url for fits file to download
+            filename (str): extracted filename to use for fits_file
+        """
+
         destination_fits_folder = "data_fits/eit"
 
         with open(os.path.join(destination_fits_folder, filename), "wb") as f:
@@ -97,6 +116,24 @@ class Eit195:
     
 
     def _fits_to_png(self):
+        """
+        Processes FITS files and saves them as PNG images with specific formatting.
+
+        This function takes FITS files, flips them vertically, and converts them into PNG images
+          with a specific colormap and normalization. It iterates through FITS files in a directory,
+            processes each one, and saves the resulting image to a designated folder. 
+
+        CONSTANTS:
+            source_dir (str): Path to the directory containing FITS files. 
+                The path can include wildcards (e.g., "data_fits/eit/*.fits").
+            target_dir (str): Path to the directory for saving processed PNGs.
+            color_map (str): Name of the Matplotlib colormap to use for image display 
+                (e.g., "sohoeit195").
+
+        Returns:
+            None
+        """
+
         source_dir="data_fits/eit/*.fits"
         target_dir="data_processed/eit/" 
         color_map="sohoeit195"
@@ -133,6 +170,21 @@ class Eit195:
 
 
     def _quality_check(self):
+        """
+        Deletes PNG files based on a grayscale intensity threshold in data_processed/eit/ folder.
+
+        1. Reads the PNG image using OpenCV's `cv2.imread` function.
+        2. Converts the image to grayscale using `cv2.cvtColor`.
+        3. Calculates the average intensity of the first row of pixels 
+        (assuming all rows have similar intensity distribution).
+        4. Compares the average intensity to a user-defined threshold.
+        5. If the average intensity is greater than the threshold, the file 
+        is deleted using `os.remove`.
+
+        Returns:
+            None
+        """
+
         source_dir="data_processed/eit/*.png" 
         treshold = 80.0
 
@@ -149,6 +201,12 @@ class Eit195:
 
     
     def _cleanup_fits_files(self):
+        """
+        Removes all FITS files (*.fits) from a data_fits directory.
+
+        Returns:
+            None
+        """
 
         source_dir="data_fits/eit/*.fits"
         fits_files_links = glob.glob(source_dir)
