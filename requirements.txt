@@ -1,2 +1,14 @@
 sunpy[all] 
-hapiclient
+hapiclient==0.2.5
+astropy==6.0.0
+hvpy==1.1.0
+opencv-python==4.9.0.90
+pandas==2.2.1
+pillow==10.2.0
+scipy==1.12.0
+zipp==3.18.1
+requests==2.31.0
+plotly==5.20.0
+numpy==1.26.4
+matplotliv==3.8.3
+
