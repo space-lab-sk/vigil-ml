@@ -9,6 +9,7 @@ from IPython.display import clear_output
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import sunpy.map
+from tqdm import tqdm
 
 
 class Eit195:
@@ -17,30 +18,44 @@ class Eit195:
         self.stop_date = stop_datetime
 
 
-    def extract_data(self, csv_filename: str, quality_check=True):
+    def extract_data(self, csv_filename: str,  custom_fits_dir_target: str=None, custom_png_dir_target: str=None, quality_check: bool=True, verbose: bool=True, remove_fits: bool=True):
         
+        if custom_fits_dir_target:
+            destination_fits_folder= custom_fits_dir_target[:-1] if custom_fits_dir_target.endswith("/") else custom_fits_dir_target
+        else:
+            destination_fits_folder = "data_fits/eit"
+
+        if custom_png_dir_target:
+            destination_pngs_folder= custom_png_dir_target if custom_png_dir_target.endswith("/") else custom_png_dir_target + "/"
+        else:
+            destination_pngs_folder = "data_processed/eit/"
+
+
         df = pd.read_csv(csv_filename, header=None, names=['links'])
 
         filtered_df = df[df['links'].str.contains('fits')]
 
         # ------------ extract fits data------------
-        self._download_fits_files_from_csv(filtered_df)
+        self._download_fits_files_from_csv(filtered_df, destination_fits_folder, verbose=verbose)
 
         # ------------ transform and load-----------
         # ---------(from fits to png and save)-------
-        self._fits_to_png()
+        if verbose:
+            print("Transforming fits to pngs...")
+
+        self._fits_to_png(destination_fits_folder, destination_pngs_folder, verbose=verbose)
 
         # -------------quality check----------------
         if quality_check:
-            self._quality_check()
+            self._quality_check(destination_pngs_folder, verbose=verbose)
 
 
         # ------------cleanup fits files-----------
-
-        self._cleanup_fits_files()
+        if remove_fits:
+            self._cleanup_fits_files(destination_fits_folder)
 
         
-    def _download_fits_files_from_csv(self, df: pd.DataFrame):
+    def _download_fits_files_from_csv(self, df: pd.DataFrame, destination_fits_folder: str, verbose: bool=True):
         """This code snippet iterates through a DataFrame assumed to contain a 'links' 
         column with download URLs for FITS files.  For each row, it extracts the link, 
         retrieves the filename from the URL, and calls a separate function (self._download_fits_file)
@@ -51,17 +66,24 @@ class Eit195:
         """
         files_count = len(df)
 
-        for index, row in df.iterrows():
 
-            print(f"downloading fits files... {index} / {files_count}")
+        if verbose:
+            iterable = tqdm(df.iterrows(), total=files_count, desc="Downloading FITS files", unit="file")
+        else:
+            iterable = df.iterrows()
+
+        for index, row in iterable:
+            if verbose:
+                iterable.set_postfix({"File": index + 1}) 
+
+            #print(f"Downloading FITS files... {index + 1} / {files_count}")
             link: str = row['links']
             filename = link.split('/')[-1]
-            self._download_fits_file(link, filename)
-
-            clear_output(wait=True)
+            self._download_fits_file(link, filename, destination_fits_folder)
 
 
-    def _download_fits_file(self, url: str, filename: str):
+
+    def _download_fits_file(self, url: str, filename: str, destination_fits_folder: str):
         """This function downloads a FITS file from a specified URL and saves it with a given filename.
         It constructs the destination path within a designated folder (data_fits/eit).
         The function uses the requests library to download the file in chunks.
@@ -73,7 +95,7 @@ class Eit195:
             filename (str): extracted filename to use for fits_file
         """
 
-        destination_fits_folder = "data_fits/eit"
+        #destination_fits_folder = "data_fits/eit"
 
         with open(os.path.join(destination_fits_folder, filename), "wb") as f:
             response = requests.get(url, stream=True)
@@ -111,11 +133,10 @@ class Eit195:
         instrument = parts[1].lower()
         channel = parts[2]
 
-        # Reformat and return the filename
         return f"{date}_{time}_{instrument}{channel}_{resolution}.png"
     
 
-    def _fits_to_png(self):
+    def _fits_to_png(self, destination_fits_folder: str, destination_pngs_folder: str, verbose: bool=True):
         """
         Processes FITS files and saves them as PNG images with specific formatting.
 
@@ -134,19 +155,28 @@ class Eit195:
             None
         """
 
-        source_dir="data_fits/eit/*.fits"
-        target_dir="data_processed/eit/" 
+        #source_dir="data_fits/eit/*.fits"
+        #target_dir="data_processed/eit/" 
+        source_dir = destination_fits_folder + "/*.fits"
+        target_dir = destination_pngs_folder
+
         color_map="sohoeit195"
 
         fits_links = glob.glob(source_dir)
 
-        for count, fits_file_link in enumerate(fits_links):
-            
-            print(f"transforming and asving image... {count + 1}")
+        if verbose:
+            iterable = tqdm(enumerate(fits_links), total=len(fits_links), desc="Transforming Images", unit="image")
+        else:
+            iterable = enumerate(fits_links)
+        
+        for count, fits_file_link in iterable:
+            if verbose:
+                iterable.set_postfix({"Image": count + 1})
+                clear_output(wait=True)  
 
             image_data = fits.getdata(fits_file_link)
 
-            # data flip verticaly
+            # Data flip vertically
             image_data = np.flipud(image_data)
 
             target_directory = target_dir
@@ -169,7 +199,7 @@ class Eit195:
             clear_output(wait=True)
 
 
-    def _quality_check(self):
+    def _quality_check(self, destination_pngs_dir: str, verbose: bool=True):
         """
         Deletes PNG files based on a grayscale intensity threshold in data_processed/eit/ folder.
 
@@ -185,8 +215,12 @@ class Eit195:
             None
         """
 
-        source_dir="data_processed/eit/*.png" 
+        #source_dir="data_processed/eit/*.png" 
+        source_dir = destination_pngs_dir + "*.png"
         treshold = 80.0
+
+        if verbose:
+            print("quality check...")
 
         png_files_links = glob.glob(source_dir)
 
@@ -200,7 +234,7 @@ class Eit195:
                 os.remove(png_file_link)
 
     
-    def _cleanup_fits_files(self):
+    def _cleanup_fits_files(self, destination_fits_folder):
         """
         Removes all FITS files (*.fits) from a data_fits directory.
 
@@ -208,7 +242,8 @@ class Eit195:
             None
         """
 
-        source_dir="data_fits/eit/*.fits"
+        #source_dir="data_fits/eit/*.fits"
+        source_dir = destination_fits_folder + "/*.fits"
         fits_files_links = glob.glob(source_dir)
 
         for fits_file_link in  fits_files_links:

@@ -6,6 +6,7 @@ import pandas as pd
 from datetime import datetime
 from hvpy import createScreenshot, DataSource, create_layers
 import time
+from tqdm import tqdm
 
 
 class Lasco:
@@ -14,7 +15,7 @@ class Lasco:
         self.stop = stop_datetime
 
 
-    def extract_data(self, detector, skip_images=0):
+    def extract_data(self, detector: str, skip_images: int=0, verbose: bool=True, custom_target_dir: str=None):
 
         # ------------extract data-----------------
         server = 'https://api.helioviewer.org/hapi/Helioviewer/hapi'
@@ -38,31 +39,43 @@ class Lasco:
         
         # ------------transform data-----------------
         hapi_data = get_hapi_data(server, dataset, parameters, self.start, self.stop)
-        images_count = len(hapi_data)
-        target_dir = f"data_processed/lasco/{detector}/"
+
+        if custom_target_dir:
+            target_dir = custom_target_dir if custom_target_dir.endswith("/") else custom_target_dir + "/"
+        else:
+            target_dir = f"data_processed/lasco/{detector}/"
 
         df = self._transform_data(hapi_data)
 
         # ------------load data (save)-----------------
-        for index, row in df.iterrows():
+        
+        self.create_screenshot(df, target_dir, hvpy_layer, detector, scale, skip_images, verbose=verbose)
 
-            print(f"{index+1} / {images_count}")
 
-            if index<skip_images:
-                print("skipping images...")
+
+    def create_screenshot(self, df: pd.DataFrame, target_dir: str, hvpy_layer: DataSource, detector: str, scale: float=None, skip_images=0, verbose=True):
+        images_count = len(df)
+
+        if verbose:
+            iterable = tqdm(range(images_count), desc="Creating Screenshots", unit="image")
+        else:
+            iterable = range(images_count) 
+
+        for index in iterable:
+
+            if index < skip_images:
+                if verbose:
+                    iterable.write("Skipping image...")
                 continue
 
-            time_str = str(row['Time'])
-
+            time_str = str(df.iloc[index]['Time']) 
             original_datetime = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-
             filename = self._extract_filename(time_str, detector)
-            save_path = target_dir+filename
+            save_path = target_dir + filename
 
-            # TODO: looks robust, make method out of this
             for attempt in range(1, 4):
                 try:
-                    screenshot_location = createScreenshot(
+                    createScreenshot(
                         date=datetime(original_datetime.year, original_datetime.month, original_datetime.day, original_datetime.hour, original_datetime.minute),
                         layers=create_layers([(hvpy_layer, 100)]),
                         imageScale=scale,
@@ -74,14 +87,11 @@ class Lasco:
                         overwrite=True
                     )
                 except Exception as e:
-                    print(f"Screenshot creation on index {index} failed: {e}")
-                    print(f"attempting: {attempt} / 4")
+                    if verbose:
+                        iterable.write(f"Screenshot creation on index {index} failed: {e}. Attempting: {attempt} / 4")
                     time.sleep(60)
                 else:
-                    print("success")
                     break
-
-            clear_output(wait=True)
 
 
     def _transform_data(self, data: np.ndarray) -> pd.DataFrame:
@@ -116,5 +126,4 @@ class Lasco:
         date = filename[0].replace("-", "")
         time = filename[1].replace(":", "")[:4] 
 
-        # Reformat and return the filename
         return f"{date}_{time}_{instrument}{channel}_{resolution}"

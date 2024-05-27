@@ -7,6 +7,7 @@ import glob
 from hvpy import createScreenshot, DataSource, create_layers
 from datetime import datetime
 import time
+from tqdm import tqdm
 
 class Mdi:
     def __init__(self, start_datetime: str, stop_datetime: str) -> None:
@@ -14,7 +15,7 @@ class Mdi:
         self.stop = stop_datetime
 
 
-    def extract_data(self, product: str, quality_check=True):
+    def extract_data(self, product: str, quality_check: bool=True, verbose: bool=True, custom_target_dir: str=None):
         
         # ------------extract data-----------------
         server = 'https://api.helioviewer.org/hapi/Helioviewer/hapi'
@@ -35,16 +36,27 @@ class Mdi:
         
         hapi_data = get_hapi_data(server, dataset, parameters, self.start, self.stop)
         images_count = len(hapi_data)
-        target_dir = f"data_processed/mdi/{product}/"
+        if custom_target_dir:
+            target_dir = custom_target_dir if custom_target_dir.endswith("/") else custom_target_dir + "/"
+        else:
+            target_dir = f"data_processed/mdi/{product}/"
 
         # ------------load data (save)-----------------
-        for count, item in enumerate(hapi_data):
+        images_count = len(hapi_data)
 
-            print(f"{count} / {images_count}")
+        if verbose:
+            iterable = tqdm(hapi_data, total=images_count, desc="Downloading", unit="file")
+        else:
+            iterable = hapi_data 
+
+        for count, item in enumerate(iterable):
             filename = self._extract_filename(item[1])
-
             self._download_file_from_hvpy(filename, target_dir, hvpy_layer, count)
-            clear_output(wait=True)
+            
+            if verbose:
+                iterable.update(1)
+                 
+
 
         # ------------check for faulty images (optional)------------
         if quality_check:
@@ -53,7 +65,8 @@ class Mdi:
 
             for count, image_path in enumerate(images_paths):
                 
-                print(f"checking quality... {count} / {images_count}")
+                if verbose:
+                    print(f"checking quality... {count} / {images_count}")
                 if self._is_mdi_image_bad(image_path):
                     os.remove(image_path)
                 
@@ -61,7 +74,7 @@ class Mdi:
 
 
     def _download_file_from_hvpy(self, filename: str, target_dir: str, hvpy_layer: DataSource, count: int):
-        """_summary_
+        """creates screenshot via hvpy high-level API for Helioviewer 
 
         Args:
             filename (str): filename for image to save
@@ -90,7 +103,6 @@ class Mdi:
                 print(f"attempting: {attempt} / 4")
                 time.sleep(60)
             else:
-                print("success")
                 break
 
 
@@ -162,7 +174,6 @@ class Mdi:
         instrument = parts[10].lower()
         channel = parts[12][:3]
 
-        # Reformat and return the filename
         return f"{date}_{time}_{instrument}{channel}_{resolution}"
     
 
