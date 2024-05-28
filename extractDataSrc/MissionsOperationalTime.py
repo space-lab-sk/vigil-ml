@@ -2,7 +2,13 @@ from datetime import datetime
 
 missions_operational_times = {
     "soho_celias": "1996-01-20 17:30:28",
-    "wind_mfi": "1994-11-13 00:00:30"
+    "wind_mfi": "1994-11-13 00:00:30",
+    "soho_eit": "1996-01-01 00:00:00",
+    "soho_mag": "1996-04-21 00:30:05",
+    "soho_con": "1996-05-19 19:08:35",
+    "soho_lasco_c2": "1997-02-21 00:55:39",
+    "soho_lasco_c3": "1997-02-20 23:54:37"
+
 }
 
 def check_operational_time(mission_instrument: str, start_datetime: str):

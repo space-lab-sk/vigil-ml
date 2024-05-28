@@ -8,6 +8,7 @@ from hvpy import createScreenshot, DataSource, create_layers
 from datetime import datetime
 import time
 from tqdm import tqdm
+from extractDataSrc.MissionsOperationalTime import check_operational_time
 
 class Mdi:
     def __init__(self, start_datetime: str, stop_datetime: str) -> None:
@@ -28,9 +29,11 @@ class Mdi:
         if product == "mag":
             dataset = "MDI_MAG"
             hvpy_layer = DataSource.MDI_MAG
+            check_operational_time("soho_mag", self.start)
         elif product == "con":
             dataset = "MDI_INT"
             hvpy_layer = DataSource.MDI_INT
+            check_operational_time("soho_con", self.start)
         else:
             raise ValueError("product should be \"mag\" for magnetogram or \"con\" for continuum")
         

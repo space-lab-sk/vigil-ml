@@ -7,6 +7,7 @@ from datetime import datetime
 from hvpy import createScreenshot, DataSource, create_layers
 import time
 from tqdm import tqdm
+from extractDataSrc.MissionsOperationalTime import check_operational_time
 
 
 class Lasco:
@@ -30,10 +31,12 @@ class Lasco:
             dataset = "LASCO_C3"
             scale = 56
             hvpy_layer = DataSource.LASCO_C3
+            check_operational_time("soho_lasco_c3", self.start)
         elif detector == "c2":
             dataset = 'LASCO_C2'
             scale = 11.5
             hvpy_layer = DataSource.LASCO_C2
+            check_operational_time("soho_lasco_c2", self.start)
         else:
             raise ValueError("product should be \"c2\" or \"c3\"")
         

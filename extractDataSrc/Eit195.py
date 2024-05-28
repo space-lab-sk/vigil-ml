@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import sunpy.map
 from tqdm import tqdm
+from extractDataSrc.MissionsOperationalTime import check_operational_time
 
 
 class Eit195:
@@ -29,6 +30,8 @@ class Eit195:
             destination_pngs_folder= custom_png_dir_target if custom_png_dir_target.endswith("/") else custom_png_dir_target + "/"
         else:
             destination_pngs_folder = "data_processed/eit/"
+
+        check_operational_time("soho_eit", self.start_date)
 
 
         df = pd.read_csv(csv_filename, header=None, names=['links'])

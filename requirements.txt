@@ -11,4 +11,10 @@ requests==2.31.0
 plotly==5.20.0
 numpy==1.26.4
 matplotliv==3.8.3
+tqdm==4.66.2
+urllib==2.2.1
+opencv-python==4.9.0.80
+drms==0.7.1
+zeep==4.2.1
+lxml==5.2.1
 
