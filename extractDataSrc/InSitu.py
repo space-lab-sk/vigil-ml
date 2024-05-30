@@ -63,7 +63,7 @@ class InSitu:
         filename = f"{event_time}_{mission}_{instrument}.csv"
         destination_filename = target_dir + filename
 
-        transformed_data_frame.to_csv(destination_filename)
+        transformed_data_frame.to_csv(destination_filename, index=False)
 
         # ------------save time-series into png (optional)-----------------
 
