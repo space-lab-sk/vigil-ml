@@ -3,3 +3,9 @@ data_processed
 data_csv
 data_fits
 custom_dir
+dco.txt
+heatmap.ipynb
+heatmap_files
+heatmap_info.txt
+meswe-38_experiments/models
+meswe-38_experiments/logs
