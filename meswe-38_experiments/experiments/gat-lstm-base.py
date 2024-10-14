@@ -20,6 +20,7 @@ from utils import Logger
 from preprocessing import get_k_fold, load_data, get_torch_data
 from preprocessing import StandardScaler
 from preprocessing import TimeSeriesDataset
+from postprocessing import save_gradient_norms_plot, save_predictions_and_true_values_plot, get_r_squared, save_scatter_predictions_and_true_values, save_predictions_detail_plot
 
 
 def count_parameters(model):
@@ -136,10 +137,10 @@ if __name__=="__main__":
     args = parser.parse_args()
 
     config_file_name = args.config_file_name
-    tracking_disabled = args.disable_tracking
-    #tracking_disabled = True if tracking_disabled is None else False
+    tracking_enabled = args.disable_tracking
+    #tracking_enabled = True if tracking_enabled is None else False
 
-    config = load_config(f"configs/{config_file_name}")
+    config = load_config(f"configs/gat-lstm_configs/{config_file_name}")
     experiment_name = config["logging"]["experiment_name"]
     logger = Logger(experiment_name)
 
@@ -204,7 +205,7 @@ if __name__=="__main__":
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     criterion = nn.MSELoss()
 
-    if tracking_disabled:
+    if tracking_enabled:
         #name="{experiment_name} - {prediction_window} Steps",
         print("SETUP WANDB TRACKING")
 
@@ -245,7 +246,7 @@ if __name__=="__main__":
 
         print(f'{epoch+1}/{NUM_EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}')
         logger.log_message(f'{epoch+1}/{NUM_EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}')
-        #if tracking_disabled:
+        #if tracking_enabled:
             #wandb.log({"train_loss": train_loss, "val_loss": val_loss})
 
         if val_loss < best_val:
@@ -257,4 +258,68 @@ if __name__=="__main__":
     print('Training completed saving....')
     logger.log_message('Training completed saving....')
     torch.save(best_model_state, f'models/{experiment_name}.pth')
+
+    save_gradient_norms_plot(gradient_norms, 
+                             tracking_enabled, 
+                             save_path=f"logs/log_figures/grad_norms/{experiment_name}_grad_norms.png")
+    
+
+    ############################
+    #PART 4: MODEL EVALUATION
+    ############################
+
+    model.load_state_dict(best_model_state)
+    
+
+    test_loss, test_predictions_standardized = validate_model(model, test_loader, criterion, device)
+    test_predictions_standardized = test_predictions_standardized.cpu()
+    test_predictions = (test_predictions_standardized * standard_scaler.y_std) + standard_scaler.y_mean
+    test_predictions = test_predictions.numpy().tolist()
+    print(f"avg. test loss {test_loss}")
+    
+    #test_y_np = test_y_unscaled
+    #test_y_np = np.squeeze(test_y_np, -1)
+    y_true_list = test_y_unscaled.tolist()
+
+    save_predictions_and_true_values_plot(y_true_list, 
+                                          test_predictions, 
+                                          tracking_enabled, 
+                                          save_path=f"logs/log_figures/t_and_p/{experiment_name}_targets_and_preds.png")
+    
+    # TODO: get detail starts and detail ends and event for each k-fold
+    save_predictions_detail_plot(y_true_list, 
+                                 test_predictions, 
+                                 tracking_enabled, 
+                                 save_path=f"logs/log_figures/pred_detail/{experiment_name}_detail_1.png",
+                                 detail_start=20,
+                                 detail_end=120,
+                                 detail_name="Event XX")
+    
+
+    save_scatter_predictions_and_true_values(test_y_unscaled, 
+                                             test_predictions, 
+                                             tracking_enabled, 
+                                             save_path=f"logs/log_figures/t_and_p_scatter/{experiment_name}_targets_and_preds_scatter.png")
+    
+
+    r_squared = get_r_squared(test_y_unscaled, test_predictions)
+
+    #TODO MSE/RMSE on test set from Dst
+
+
+    lowest_val_loss_messeage = f"{best_val:.5f}"
+    #wandb.run.summary['lowest_val_loss'] = lowest_val_loss_messeage
+    #wandb.run.summary['R_squared'] = r_squared
+    print(f"lowest val. loss: {best_val:.5f}")
+    #wandb.finish()
+
+
+    
+
+
+
+
+
+
+
     
