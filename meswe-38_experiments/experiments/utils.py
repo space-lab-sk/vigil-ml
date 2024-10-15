@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import numpy as np
 import yaml
 import os
@@ -17,6 +18,36 @@ def set_seed():
     np.random.seed(42)
     np.set_printoptions(suppress=True, formatter={'float_kind':'{:.10f}'.format})
     torch.set_float32_matmul_precision("high")
+
+
+def apply_glorot_xavier(model):
+    for layer in model.children():
+        if isinstance(layer, nn.Linear):
+            torch.nn.init.xavier_uniform_(layer.weight)
+            if layer.bias is not None:
+                torch.nn.init.constant_(layer.bias, 0.0)
+
+
+def inspect_gradient_norms(model):
+    total_norm = 0.0
+    for p in model.parameters():
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+    total_norm = total_norm ** 0.5
+    return total_norm
+
+
+def count_parameters(model):
+    total_params = 0
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        param_count = parameter.numel()
+        total_params += param_count
+        #print(f"{name}: {param_count} parameters")
+    #print(f"Total number of parameters: {total_params}")
+    return total_params
 
 
 def get_torch_device():

@@ -8,124 +8,75 @@ import math
 import matplotlib.pyplot as plt
 import copy
 import logging
-#import wandb
-
-from torch_geometric.nn import GATConv
-from torch_geometric.data import Data, Batch
-from torch_geometric.loader import DataLoader
-
+import wandb
 import argparse
-from utils import set_seed, get_torch_device, load_config
+
+
+from utils import set_seed, get_torch_device, load_config, \
+    count_parameters, apply_glorot_xavier, inspect_gradient_norms
 from utils import Logger
+
 from preprocessing import get_k_fold, load_data, get_torch_data
 from preprocessing import StandardScaler
-from preprocessing import TimeSeriesDataset
-from postprocessing import save_gradient_norms_plot, save_predictions_and_true_values_plot, get_r_squared, save_scatter_predictions_and_true_values, save_predictions_detail_plot
 
-
-def count_parameters(model):
-    total_params = 0
-    for name, parameter in model.named_parameters():
-        if not parameter.requires_grad:
-            continue
-        param_count = parameter.numel()
-        total_params += param_count
-        #print(f"{name}: {param_count} parameters")
-    #print(f"Total number of parameters: {total_params}")
-    return total_params
-
-
-
-def inspect_gradient_norms(model):
-    total_norm = 0.0
-    for p in model.parameters():
-        if p.grad is not None:
-            param_norm = p.grad.data.norm(2)
-            total_norm += param_norm.item() ** 2
-    total_norm = total_norm ** 0.5
-    return total_norm
-
+from postprocessing import save_gradient_norms_plot, save_predictions_and_true_values_plot, \
+    save_predictions_detail_plot, save_scatter_predictions_and_true_values, \
+    get_dst_rmse, get_detail_properties, get_r_squared
 
 
 def train_model(model, train_loader, optimizer, criterion, device):
     model.train()
     total_loss = 0
-    for batch in train_loader:
-        batch = batch.to(device)
+    for inputs, targets in train_loader:
+        inputs, targets = inputs.to(device) , targets.to(device)
         optimizer.zero_grad()
-        out = model(batch.x, batch.edge_index, batch.batch)
-        loss = criterion(out, batch.y)
+        outputs = model(inputs)
+        targets = targets.squeeze(-1)
+        loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
     mean_loss = total_loss / len(train_loader)
     return mean_loss
 
-def validate_model(model, val_loader, criterion, device):
+def validate_model(model, val_test_loader, criterion, device):
     model.eval()
     total_loss = 0
     with torch.no_grad():
-        for batch in val_loader:
-            batch = batch.to(device)
-            out = model(batch.x, batch.edge_index, batch.batch)
-            loss = criterion(out, batch.y)
+        for inputs, targets in val_test_loader:
+            inputs, targets = inputs.to(device) , targets.to(device)
+            outputs = model(inputs)
+            targets = targets.squeeze(-1)
+            loss = criterion(outputs, targets)
             total_loss += loss.item()
-    mean_loss = total_loss / len(val_loader)
-    return mean_loss, out
+    mean_loss = total_loss / len(val_test_loader)
+    return mean_loss, outputs.squeeze(-1)
 
 
+class GRUModel(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, num_gru_layers):
+        super(GRUModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_gru_layers = num_gru_layers
 
-def apply_glorot_xavier(model):
-    for layer in model.children():
-        if isinstance(layer, nn.Linear):
-            torch.nn.init.xavier_uniform_(layer.weight)
-            if layer.bias is not None:
-                torch.nn.init.constant_(layer.bias, 0.0)
+        self.gru = nn.GRU(input_size, hidden_size, num_gru_layers, batch_first=True, bidirectional=False)
 
+        self.fc1 = nn.Linear(hidden_size, output_size)
 
-class TimeSeriesGNN(nn.Module):
-    def __init__(self, num_features, hidden_channels, output_size, num_lstm_layers=2, num_heads=4):
-        super(TimeSeriesGNN, self).__init__()
-        self.num_lstm_layers = num_lstm_layers
-        self.hidden_channels = hidden_channels
-        self.num_heads = num_heads
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
 
-        self.gat1 = GATConv(num_features, hidden_channels, heads=num_heads, concat=True, dropout=0.0)
-        self.gat2 = GATConv(hidden_channels * num_heads, hidden_channels, heads=1, concat=True, dropout=0.0)
+    def forward(self, x):
 
-        self.lstm = nn.LSTM(hidden_channels, hidden_channels, num_layers=num_lstm_layers, batch_first=True)
+        h0 = torch.zeros(self.num_gru_layers, x.size(0), self.hidden_size).to(x.device)
+        out, _ = self.gru(x, h0)
 
-        self.linear = nn.Linear(hidden_channels, output_size)
+        out = self.fc1(out[:, -1, :])
 
-    def forward(self, x, edge_index, batch=None):
-
-        # x in  2d shape [batch_size * seq_len, features], holes in edge index makes sure that sequences are not interconected between batches,
-        #  that could create information leak of target variable
-        
-        x = F.elu(self.gat1(x, edge_index)) 
-        x = F.dropout(x, p=0.0, training=self.training)
-
-        x = F.elu(self.gat2(x, edge_index))
-        x = F.dropout(x, p=0.0, training=self.training)
-
-        x = x.view(batch.max().item() + 1, -1, x.size(-1))  # back to 3d [batch_size, seq_len, features] shape for lstm
-
-        h0 = torch.zeros(self.num_lstm_layers, x.size(0), self.hidden_channels).to(x.device)
-        c0 = torch.zeros(self.num_lstm_layers, x.size(0), self.hidden_channels).to(x.device)
-
-        x, _ = self.lstm(x, (h0, c0))
-
-        x = x[:, -1, :]  # taking last state of lstm, [batch_size, features]
-
-        x = self.linear(x)
-        
-        # out in shape [batch_size, 1]
-        return x
+        return out
     
 
-
 if __name__=="__main__":
-
 
     ########################################
     #PART 1: EXPERIMENT CONFIGURATION SETUP
@@ -140,9 +91,10 @@ if __name__=="__main__":
     tracking_enabled = args.disable_tracking
     #tracking_enabled = True if tracking_enabled is None else False
 
-    config = load_config(f"configs/gat-lstm_configs/{config_file_name}")
-    experiment_name = config["logging"]["experiment_name"]
-    logger = Logger(experiment_name)
+    config = load_config(f"configs/gru-configs/{config_file_name}")
+    EXPERIMENT_NAME = config["logging"]["experiment_name"]
+    EXPERIMENT_NOTES = config["logging"]["notes"]
+    logger = Logger(EXPERIMENT_NAME)
 
     set_seed()
     device = get_torch_device()
@@ -155,7 +107,7 @@ if __name__=="__main__":
     INPUT_SIZE = config["model"]["input_size"]
     HIDDEN_CHANNELS = config["model"]["hidden_channels"]
     OUTPUT_SIZE = config["model"]["output_size"]
-    NUM_LSTM_LAYERS = config["model"]["num_lstm_layers"]
+    NUM_GRU_LAYERS = config["model"]["num_gru_layers"]
     DROPOUT = config["model"]["dropout"]
 
     TIME_STEPS = config["data"]["time_steps"]
@@ -187,18 +139,19 @@ if __name__=="__main__":
     val_X, val_y = get_torch_data(val_X, val_y)
     test_X, test_y = get_torch_data(test_X, test_y)
 
-    train_dataset = TimeSeriesDataset(train_X, train_y)
-    val_dataset = TimeSeriesDataset(val_X, val_y)
-    test_dataset = TimeSeriesDataset(test_X, test_y)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False)
-    val_loader = DataLoader(val_dataset, batch_size=len(val_dataset), shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)
+
+    train_dataset = torch.utils.data.TensorDataset(train_X, train_y)
+    val_dataset = torch.utils.data.TensorDataset(val_X, val_y)
+    test_dataset = torch.utils.data.TensorDataset(test_X, test_y)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=len(val_dataset), shuffle=False)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)
 
     ###############################################
     #PART 3: DEEP LEARNING PART AND WANDB TRACKING
     ###############################################
 
-    model = TimeSeriesGNN(num_features=INPUT_SIZE, hidden_channels=HIDDEN_CHANNELS, output_size=OUTPUT_SIZE, num_lstm_layers=NUM_LSTM_LAYERS)
+    model = GRUModel(input_size=INPUT_SIZE, hidden_size=HIDDEN_CHANNELS, output_size=OUTPUT_SIZE, num_gru_layers=NUM_GRU_LAYERS)
     model.to(device)
     apply_glorot_xavier(model)
 
@@ -206,8 +159,30 @@ if __name__=="__main__":
     criterion = nn.MSELoss()
 
     if tracking_enabled:
-        #name="{experiment_name} - {prediction_window} Steps",
-        print("SETUP WANDB TRACKING")
+        name=f"{EXPERIMENT_NAME} - {PREDICTION_WINDOW} Steps"
+        wandb.init(
+            project="MESWE-38-experiments",
+            name=name,
+            notes=EXPERIMENT_NOTES,
+            entity="majirky-technical-university-of-ko-ice",
+            anonymous="allow"
+        )
+
+        config = wandb.config
+        config.inputs = INPUT_SIZE
+        config.hidden_size = HIDDEN_CHANNELS
+        config.num_gru_layers = NUM_GRU_LAYERS
+        config.learning_rate = LEARNING_RATE
+        config.batch_size = BATCH_SIZE
+        config.criterion = str(criterion)
+        config.optimizer = str(optimizer)
+        config.time_steps = TIME_STEPS
+        config.epochs = NUM_EPOCHS
+        config.prediction_window = PREDICTION_WINDOW
+        config.k_fold = K_FOLD
+        config.weight_decay = WEIGHT_DECAY
+
+        wandb.watch(model, log="all", log_freq=1)
 
 
     print(model)
@@ -246,8 +221,8 @@ if __name__=="__main__":
 
         print(f'{epoch+1}/{NUM_EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}')
         logger.log_message(f'{epoch+1}/{NUM_EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}')
-        #if tracking_enabled:
-            #wandb.log({"train_loss": train_loss, "val_loss": val_loss})
+        if tracking_enabled:
+            wandb.log({"train_loss": train_loss, "val_loss": val_loss})
 
         if val_loss < best_val:
             best_val = val_loss
@@ -257,11 +232,12 @@ if __name__=="__main__":
 
     print('Training completed saving....')
     logger.log_message('Training completed saving....')
-    torch.save(best_model_state, f'models/{experiment_name}.pth')
+    torch.save(best_model_state, f'models/{EXPERIMENT_NAME}.pth')
 
     save_gradient_norms_plot(gradient_norms, 
-                             tracking_enabled, 
-                             save_path=f"logs/log_figures/grad_norms/{experiment_name}_grad_norms.png")
+                             tracking_enabled,
+                             wandb=wandb,
+                             save_path=f"logs/log_figures/grad_norms/{EXPERIMENT_NAME}_grad_norms.png")
     
 
     ############################
@@ -276,50 +252,53 @@ if __name__=="__main__":
     test_predictions = (test_predictions_standardized * standard_scaler.y_std) + standard_scaler.y_mean
     test_predictions = test_predictions.numpy().tolist()
     print(f"avg. test loss {test_loss}")
+    logger.log_message(f"avg. test loss {test_loss}")
     
     #test_y_np = test_y_unscaled
     #test_y_np = np.squeeze(test_y_np, -1)
     y_true_list = test_y_unscaled.tolist()
 
+    # if wandb is not provided, then automaticaly no tracking is executed
     save_predictions_and_true_values_plot(y_true_list, 
                                           test_predictions, 
                                           tracking_enabled, 
-                                          save_path=f"logs/log_figures/t_and_p/{experiment_name}_targets_and_preds.png")
+                                          wandb=wandb,
+                                          save_path=f"logs/log_figures/t_and_p/{EXPERIMENT_NAME}_targets_and_preds.png")
     
-    # TODO: get detail starts and detail ends and event for each k-fold
+    # TODO: get detailes
+    detail_1_start, detail_1_end, detail_1_name = get_detail_properties(K_FOLD, detail=1)
+    detail_2_start, detail_2_end, detail_2_name = get_detail_properties(K_FOLD, detail=2)
+
     save_predictions_detail_plot(y_true_list, 
                                  test_predictions, 
-                                 tracking_enabled, 
-                                 save_path=f"logs/log_figures/pred_detail/{experiment_name}_detail_1.png",
+                                 tracking_enabled,
+                                 wandb=wandb, 
+                                 save_path=f"logs/log_figures/pred_detail/{EXPERIMENT_NAME}_detail_1.png",
                                  detail_start=20,
                                  detail_end=120,
                                  detail_name="Event XX")
     
-
     save_scatter_predictions_and_true_values(test_y_unscaled, 
                                              test_predictions, 
-                                             tracking_enabled, 
-                                             save_path=f"logs/log_figures/t_and_p_scatter/{experiment_name}_targets_and_preds_scatter.png")
+                                             tracking_enabled,
+                                             wandb=wandb, 
+                                             save_path=f"logs/log_figures/t_and_p_scatter/{EXPERIMENT_NAME}_targets_and_preds_scatter.png")
     
-
+    print(test_y_unscaled.shape)
+    print(np.array(test_predictions).shape)
     r_squared = get_r_squared(test_y_unscaled, test_predictions)
 
-    #TODO MSE/RMSE on test set from Dst
+    dst_rmse = get_dst_rmse(test_y_unscaled, test_predictions)
 
-
-    lowest_val_loss_messeage = f"{best_val:.5f}"
-    #wandb.run.summary['lowest_val_loss'] = lowest_val_loss_messeage
-    #wandb.run.summary['R_squared'] = r_squared
+    print(f"R^2 on test set: {r_squared:.5f}")
+    print(f"Dst RMSE on test set between targets and predictions: {dst_rmse:.5f}")
     print(f"lowest val. loss: {best_val:.5f}")
-    #wandb.finish()
-
-
-    
-
-
-
-
-
-
-
-    
+    logger.log_message(f"R^2 on test set: {r_squared:.5f}")
+    logger.log_message(f"Dst RMSE on test set between targets and predictions: {dst_rmse:.5f}")
+    logger.log_message(f"lowest val. loss: {best_val:.5f}")
+    if tracking_enabled:
+        lowest_val_loss_messeage = f"{best_val:.5f}" # for wandb
+        wandb.run.summary['lowest_val_loss'] = lowest_val_loss_messeage
+        wandb.run.summary['R_squared'] = r_squared
+        wandb.run.summary['dst_rmse'] = dst_rmse
+        wandb.finish()

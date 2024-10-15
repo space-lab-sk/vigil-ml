@@ -9,3 +9,4 @@ heatmap_files
 heatmap_info.txt
 meswe-38_experiments/models
 meswe-38_experiments/logs
+meswe-38_experiments/wandb
