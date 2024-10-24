@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import copy
 import wandb
+import numpy as np
+import pandas as pd
 
 from torch_geometric.nn import GATConv
 from torch_geometric.data import Data, Batch
@@ -21,12 +23,43 @@ from postprocessing import save_gradient_norms_plot, save_predictions_and_true_v
     get_dst_rmse
 
 
-def train_model(model, train_loader, optimizer, criterion, device):
+def apply_smoothing(batch_x, batch, augumentation_rate, smoothing_window=5):
+
+    num_sequences = batch.max().item() + 1
+    num_sequences_to_smooth = int(num_sequences * augumentation_rate)
+
+    sequences_to_smooth = np.random.choice(num_sequences, num_sequences_to_smooth, replace=False)
+
+    smoothed_batch_x = batch_x.clone()
+
+    for seq_idx in sequences_to_smooth:
+        sequence_mask = (batch == seq_idx)
+        
+        # print(sequence_mask[0:120])
+        # yay works! if by chance first sequence of the batch should be augumented, we can see that only first 100 rows (first sequence) 
+        # will be augumented. This approach is needed as batch.x is tensor with (batch_size * sequence_lenght, features) shape.
+        # To prevent data leak from one sequence to another, 
+        # edge index is constructed with no edges between last time-stamp of sequence 1 and first time-stamp of sequence 2
+
+        sequence_data = smoothed_batch_x[sequence_mask].cpu().numpy()
+
+        df = pd.DataFrame(sequence_data)
+        
+        # MA
+        smoothed_data = df.rolling(window=smoothing_window, min_periods=1).mean()
+
+        smoothed_batch_x[sequence_mask] = torch.tensor(smoothed_data.values, device=batch_x.device, dtype=torch.float32)
+
+    return smoothed_batch_x
+
+
+def train_model(model, train_loader, optimizer, criterion, device, AUGUMENTATION_RATE):
     model.train()
     total_loss = 0
     for batch in train_loader:
         batch = batch.to(device)
         optimizer.zero_grad()
+        batch.x = apply_smoothing(batch.x, batch.batch, AUGUMENTATION_RATE)
         out = model(batch.x, batch.edge_index, batch.batch)
         loss = criterion(out, batch.y)
         loss.backward()
@@ -48,16 +81,17 @@ def validate_model(model, val_loader, criterion, device):
     return mean_loss, out
 
 class TimeSeriesGNN(nn.Module):
-    def __init__(self, num_features, hidden_channels, output_size, num_gru_layers=2, num_heads=4):
+    def __init__(self, num_features, hidden_channels, output_size, dropout, num_gru_layers=2, num_heads=4):
         super(TimeSeriesGNN, self).__init__()
         self.num_gru_layers = num_gru_layers
         self.hidden_channels = hidden_channels
         self.num_heads = num_heads
+        self.dropout = dropout
 
-        self.gat1 = GATConv(num_features, hidden_channels, heads=num_heads, concat=True, dropout=0.0)
-        self.gat2 = GATConv(hidden_channels * num_heads, hidden_channels, heads=1, concat=True, dropout=0.0)
+        self.gat1 = GATConv(num_features, hidden_channels, heads=num_heads, concat=True)
+        self.gat2 = GATConv(hidden_channels * num_heads, hidden_channels, heads=1, concat=True)
 
-        self.gru = nn.GRU(hidden_channels, hidden_channels, num_gru_layers, batch_first=True, bidirectional=False)
+        self.gru = nn.GRU(hidden_channels, hidden_channels, num_gru_layers, batch_first=True, bidirectional=False, dropout=dropout)
 
         self.linear = nn.Linear(hidden_channels, output_size)
 
@@ -67,10 +101,10 @@ class TimeSeriesGNN(nn.Module):
         #  that could create information leak of target variable
         
         x = F.elu(self.gat1(x, edge_index)) 
-        x = F.dropout(x, p=0.0, training=self.training)
+        x = F.dropout(x, p=self.dropout, training=self.training)
 
         x = F.elu(self.gat2(x, edge_index))
-        x = F.dropout(x, p=0.0, training=self.training)
+        x = F.dropout(x, p=self.dropout, training=self.training)
 
         x = x.view(batch.max().item() + 1, -1, x.size(-1))  # back to 3d [batch_size, seq_len, features] shape for gru
 
@@ -96,11 +130,13 @@ if __name__=="__main__":
 
     parser = argparse.ArgumentParser(description='Process a config file location.')
     parser.add_argument("-cfn", '--config_file_name', type=str, help='Path to the input config file')
+    parser.add_argument("-dev", "--device", type=str, help="Select device: cuda:0 | cuda:1 | cpu |")
     parser.add_argument("-dt", "--disable_tracking", action="store_false", help="Disable Weights and Biases tracking with its config file")
     args = parser.parse_args()
 
     config_file_name = args.config_file_name
     tracking_enabled = args.disable_tracking
+    device_input = args.device
     #tracking_enabled = True if tracking_enabled is None else False
 
     config = load_config(f"configs/gat-gru-configs/{config_file_name}")
@@ -109,12 +145,13 @@ if __name__=="__main__":
     logger = Logger(EXPERIMENT_NAME)
 
     set_seed()
-    device = get_torch_device()
+    device = get_torch_device(device_input)
 
     BATCH_SIZE = config["training"]["batch_size"]
     LEARNING_RATE = config["training"]["learning_rate"]
     NUM_EPOCHS = config["training"]["num_epochs"]
     WEIGHT_DECAY = config["training"]["weight_decay"]
+    AUGUMENTATION_RATE = config["training"]["augumentation_rate"]
 
     INPUT_SIZE = config["model"]["input_size"]
     HIDDEN_CHANNELS = config["model"]["hidden_channels"]
@@ -162,7 +199,7 @@ if __name__=="__main__":
     #PART 3: DEEP LEARNING PART AND WANDB TRACKING
     ###############################################
 
-    model = TimeSeriesGNN(num_features=INPUT_SIZE, hidden_channels=HIDDEN_CHANNELS, output_size=OUTPUT_SIZE, num_gru_layers=NUM_GRU_LAYERS)
+    model = TimeSeriesGNN(num_features=INPUT_SIZE, hidden_channels=HIDDEN_CHANNELS, output_size=OUTPUT_SIZE, num_gru_layers=NUM_GRU_LAYERS, dropout=DROPOUT)
     model.to(device)
     apply_glorot_xavier(model)
 
@@ -192,6 +229,7 @@ if __name__=="__main__":
         config.prediction_window = PREDICTION_WINDOW
         config.k_fold = K_FOLD
         config.weight_decay = WEIGHT_DECAY
+        config.augumentation_rate = AUGUMENTATION_RATE
 
         wandb.watch(model, log="all", log_freq=1)
 
@@ -219,7 +257,7 @@ if __name__=="__main__":
     best_model_state = None
 
     for epoch in range(NUM_EPOCHS):
-        train_loss = train_model(model, train_loader, optimizer, criterion, device)
+        train_loss = train_model(model, train_loader, optimizer, criterion, device, AUGUMENTATION_RATE)
         val_loss, _ = validate_model(model, val_loader, criterion, device)
 
         losses.append(train_loss)
@@ -275,18 +313,20 @@ if __name__=="__main__":
                                           wandb=wandb,
                                           save_path=f"logs/log_figures/t_and_p/{EXPERIMENT_NAME}_targets_and_preds.png")
     
-    # TODO: get detailes
-    detail_1_start, detail_1_end, detail_1_name = get_detail_properties(K_FOLD, detail=1)
-    detail_2_start, detail_2_end, detail_2_name = get_detail_properties(K_FOLD, detail=2)
+    
+    # plot in detail 3 geomagnetic storms period from test set for different k-folds
+    for detail_number in range (4):
+        detail_start, detail_end, detail_name = get_detail_properties(K_FOLD, detail=detail_number)
 
-    save_predictions_detail_plot(y_true_list, 
-                                 test_predictions, 
-                                 tracking_enabled, 
-                                 wandb=wandb,
-                                 save_path=f"logs/log_figures/pred_detail/{EXPERIMENT_NAME}_detail_1.png",
-                                 detail_start=20,
-                                 detail_end=120,
-                                 detail_name="Event XX")
+        save_predictions_detail_plot(y_true_list, 
+                                    test_predictions, 
+                                    tracking_enabled, 
+                                    wandb=wandb,
+                                    save_path=f"logs/log_figures/pred_detail/{EXPERIMENT_NAME}_detail_{detail_number}.png",
+                                    detail_start=detail_start,
+                                    detail_end=detail_end,
+                                    detail_name=detail_name)
+    
     
     save_scatter_predictions_and_true_values(test_y_unscaled, 
                                              test_predictions, 
@@ -304,12 +344,12 @@ if __name__=="__main__":
     logger.log_message(f"R^2 on test set: {r_squared:.5f}")
     logger.log_message(f"Dst RMSE on test set between targets and predictions: {dst_rmse:.5f}")
     logger.log_message(f"lowest val. loss: {best_val:.5f}")
-    #if tracking_enabled:
-        #lowest_val_loss_messeage = f"{best_val:.5f}" # for wandb
-        #wandb.run.summary['lowest_val_loss'] = lowest_val_loss_messeage
-        #wandb.run.summary['R_squared'] = r_squared
-        #wandb.run.summary['dst_rmse'] = dst_rmse
-        #wandb.finish()
+    if tracking_enabled:
+        lowest_val_loss_messeage = f"{best_val:.5f}" # for wandb
+        wandb.run.summary['lowest_val_loss'] = lowest_val_loss_messeage
+        wandb.run.summary['R_squared'] = r_squared
+        wandb.run.summary['dst_rmse'] = dst_rmse
+        wandb.finish()
 
 
     

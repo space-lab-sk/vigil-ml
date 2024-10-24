@@ -115,10 +115,40 @@ def save_scatter_predictions_and_true_values(test_y: np.ndarray, predictions: np
 
 
 
-def get_detail_properties(K_FOLD, detail):
+def get_detail_properties(K_FOLD: int, detail: int):
+    """ gets detail properties for graph. available K_folds = {1,..,5} ; available details = {1,..,3}"""
+
+
+    k_folds_data = {
+    1: [
+        {"title": "Detail on event 38", "detail_start": 880, "detail_end": 1050},
+        {"title": "Detail on event 15", "detail_start": 2450, "detail_end": 2600},
+        {"title": "Detail on event 23", "detail_start": 3670, "detail_end": 3950}
+    ],
+    2: [
+        {"title": "Detail on event 34", "detail_start": 1520, "detail_end": 1700},
+        {"title": "Detail on event 17", "detail_start": 2520, "detail_end": 2750},
+        {"title": "Detail on event 11", "detail_start": 3770, "detail_end": 3950}
+    ],
+    3: [
+        {"title": "Detail on event 35", "detail_start": 900, "detail_end": 1700},
+        {"title": "Detail on event 14", "detail_start": 2520, "detail_end": 2750},
+        {"title": "Detail on event 23", "detail_start": 3770, "detail_end": 3950}
+    ],
+    4: [
+        {"title": "Detail on event 34", "detail_start": 1520, "detail_end": 1700},
+        {"title": "Detail on event 15", "detail_start": 2400, "detail_end": 2520},
+        {"title": "Detail on event 11", "detail_start": 3470, "detail_end": 3950}
+    ],
+    5: [
+        {"title": "Detail on event 8", "detail_start": 500, "detail_end": 600},
+        {"title": "Detail on event 30", "detail_start": 1250, "detail_end": 1420},
+        {"title": "Detail on event 12", "detail_start": 2770, "detail_end": 2950}
+    ]
+}
     
-    detail_start = 20
-    detail_end = 100
-    detail_name = "Event XX"
+    detail_start = k_folds_data[K_FOLD][detail]["detail_start"]
+    detail_end = k_folds_data[K_FOLD][detail]["detail_end"]
+    detail_name = k_folds_data[K_FOLD][detail]["detail_title"]
 
     return detail_start, detail_end, detail_name

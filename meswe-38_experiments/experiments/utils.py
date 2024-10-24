@@ -50,7 +50,12 @@ def count_parameters(model):
     return total_params
 
 
-def get_torch_device():
+def get_torch_device(device=None):
+
+    if device:
+        torch.device(device)
+        return device
+
     if torch.cuda.is_available():
         device = torch.device('cuda')
         print(f"Using GPU: {torch.cuda.get_device_name(0)}")

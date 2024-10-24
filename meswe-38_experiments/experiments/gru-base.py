@@ -24,12 +24,30 @@ from postprocessing import save_gradient_norms_plot, save_predictions_and_true_v
     get_dst_rmse, get_detail_properties, get_r_squared
 
 
-def train_model(model, train_loader, optimizer, criterion, device):
+
+def apply_smoothing(batch_x, augumentation_rate, smoothing_window=5):
+
+    batch_size, sequence, features = batch_x.shape
+    num_samples_to_smooth = int(batch_size * augumentation_rate)
+
+    indices_to_smooth = np.random.choice(batch_size, num_samples_to_smooth, replace=False)
+    
+    smoothed_batch_x = batch_x.clone()
+    for idx in indices_to_smooth:
+        df = pd.DataFrame(smoothed_batch_x[idx].cpu().numpy())
+        smoothed_data = df.rolling(window=smoothing_window, min_periods=1).mean()
+        smoothed_batch_x[idx] = torch.tensor(smoothed_data.values, device=batch_x.device, dtype=torch.float32)
+
+    return smoothed_batch_x
+
+
+def train_model(model, train_loader, optimizer, criterion, device, AUGUMENTATION_RATE):
     model.train()
     total_loss = 0
     for inputs, targets in train_loader:
         inputs, targets = inputs.to(device) , targets.to(device)
         optimizer.zero_grad()
+        inputs = apply_smoothing(inputs, AUGUMENTATION_RATE)
         outputs = model(inputs)
         targets = targets.squeeze(-1)
         loss = criterion(outputs, targets)
@@ -54,12 +72,12 @@ def validate_model(model, val_test_loader, criterion, device):
 
 
 class GRUModel(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_gru_layers):
+    def __init__(self, input_size, hidden_size, output_size, num_gru_layers, dropout):
         super(GRUModel, self).__init__()
         self.hidden_size = hidden_size
         self.num_gru_layers = num_gru_layers
 
-        self.gru = nn.GRU(input_size, hidden_size, num_gru_layers, batch_first=True, bidirectional=False)
+        self.gru = nn.GRU(input_size, hidden_size, num_gru_layers, batch_first=True, bidirectional=False, dropout=dropout)
 
         self.fc1 = nn.Linear(hidden_size, output_size)
 
@@ -84,11 +102,13 @@ if __name__=="__main__":
 
     parser = argparse.ArgumentParser(description='Process a config file location.')
     parser.add_argument("-cfn", '--config_file_name', type=str, help='Path to the input config file')
+    parser.add_argument("-dev", "--device", type=str, help="Select device: cuda:0 | cuda:1 | cpu |")
     parser.add_argument("-dt", "--disable_tracking", action="store_false", help="Disable Weights and Biases tracking with its config file")
     args = parser.parse_args()
 
     config_file_name = args.config_file_name
     tracking_enabled = args.disable_tracking
+    device_input = args.device
     #tracking_enabled = True if tracking_enabled is None else False
 
     config = load_config(f"configs/gru-configs/{config_file_name}")
@@ -97,12 +117,13 @@ if __name__=="__main__":
     logger = Logger(EXPERIMENT_NAME)
 
     set_seed()
-    device = get_torch_device()
+    device = get_torch_device(device_input)
 
     BATCH_SIZE = config["training"]["batch_size"]
     LEARNING_RATE = config["training"]["learning_rate"]
     NUM_EPOCHS = config["training"]["num_epochs"]
     WEIGHT_DECAY = config["training"]["weight_decay"]
+    AUGUMENTATION_RATE = config["training"]["augumentation_rate"]
 
     INPUT_SIZE = config["model"]["input_size"]
     HIDDEN_CHANNELS = config["model"]["hidden_channels"]
@@ -151,7 +172,7 @@ if __name__=="__main__":
     #PART 3: DEEP LEARNING PART AND WANDB TRACKING
     ###############################################
 
-    model = GRUModel(input_size=INPUT_SIZE, hidden_size=HIDDEN_CHANNELS, output_size=OUTPUT_SIZE, num_gru_layers=NUM_GRU_LAYERS)
+    model = GRUModel(input_size=INPUT_SIZE, hidden_size=HIDDEN_CHANNELS, output_size=OUTPUT_SIZE, num_gru_layers=NUM_GRU_LAYERS, dropout=DROPOUT)
     model.to(device)
     apply_glorot_xavier(model)
 
@@ -181,6 +202,7 @@ if __name__=="__main__":
         config.prediction_window = PREDICTION_WINDOW
         config.k_fold = K_FOLD
         config.weight_decay = WEIGHT_DECAY
+        config.augumentation_rate = AUGUMENTATION_RATE
 
         wandb.watch(model, log="all", log_freq=1)
 
@@ -208,7 +230,7 @@ if __name__=="__main__":
     best_model_state = None
 
     for epoch in range(NUM_EPOCHS):
-        train_loss = train_model(model, train_loader, optimizer, criterion, device)
+        train_loss = train_model(model, train_loader, optimizer, criterion, device, AUGUMENTATION_RATE)
         val_loss, _ = validate_model(model, val_loader, criterion, device)
 
         losses.append(train_loss)
@@ -265,18 +287,25 @@ if __name__=="__main__":
                                           wandb=wandb,
                                           save_path=f"logs/log_figures/t_and_p/{EXPERIMENT_NAME}_targets_and_preds.png")
     
-    # TODO: get detailes
-    detail_1_start, detail_1_end, detail_1_name = get_detail_properties(K_FOLD, detail=1)
-    detail_2_start, detail_2_end, detail_2_name = get_detail_properties(K_FOLD, detail=2)
+    # plot in detail 3 geomagnetic storms period from test set for different k-folds
+    for detail_number in range (4):
+        detail_start, detail_end, detail_name = get_detail_properties(K_FOLD, detail=detail_number)
 
-    save_predictions_detail_plot(y_true_list, 
-                                 test_predictions, 
-                                 tracking_enabled,
-                                 wandb=wandb, 
-                                 save_path=f"logs/log_figures/pred_detail/{EXPERIMENT_NAME}_detail_1.png",
-                                 detail_start=20,
-                                 detail_end=120,
-                                 detail_name="Event XX")
+        save_predictions_detail_plot(y_true_list, 
+                                    test_predictions, 
+                                    tracking_enabled, 
+                                    wandb=wandb,
+                                    save_path=f"logs/log_figures/pred_detail/{EXPERIMENT_NAME}_detail_{detail_number}.png",
+                                    detail_start=detail_start,
+                                    detail_end=detail_end,
+                                    detail_name=detail_name)
+    
+    
+    save_scatter_predictions_and_true_values(test_y_unscaled, 
+                                             test_predictions, 
+                                             tracking_enabled, 
+                                             wandb=wandb,
+                                             save_path=f"logs/log_figures/t_and_p_scatter/{EXPERIMENT_NAME}_targets_and_preds_scatter.png")
     
     save_scatter_predictions_and_true_values(test_y_unscaled, 
                                              test_predictions, 
